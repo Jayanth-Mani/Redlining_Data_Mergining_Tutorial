@@ -1,0 +1,1 @@
+Household_Income_at_Age_35_rP_gP_p25: Predicted average annual household income in adulthood for children with parents at the 25th percentile of the national income distribution.

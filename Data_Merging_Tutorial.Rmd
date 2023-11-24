@@ -1,0 +1,327 @@
+---
+title: "Data on historical redlining, modern day economic mobility and child opportunity"
+author: "Jayanth Mani"
+date: "2023-11-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+if (requireNamespace("thematic")) 
+  thematic::thematic_rmd(font = "auto")
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+# Introduction
+
+This tutorial walks through the process of merging several public datasets that we used to study the effects of historical redlining on modern day economic mobility and child opportunity. In the 1930s, the Home Owners’ Loan Corporation (HOLC) drew lines on maps 
+to grade loan security on an A-D scale, known as redlining. These maps were used to limit 
+access to mortgages in predominantly African American and immigrant neighborhoods. Previous research has shown that formerly redlined neighborhoods have continuing modern-day impacts 
+on health, environment such as worse air pollution and lower economic activity. Our research builds upon this work with a focus on the effects of redlining on modern day economic mobility and child opportunity. 
+
+We will use data from the Opportunity Atlas to study economic mobility. We will also use the Child Opportunity Index 2.0 from Diversity Datakids, which is a composite index of neighborhood conditions that influence a child's healthy development and long term outcomes, and demographic variables from the American Community Survey.  
+
+This tutorial provides a summary of how we merged the following datasets:
+
+1. [The American Community Census](https://www.census.gov/programs-surveys/acs)
+2. [University of Richmond HOLC dataset (2010 census)](https://github.com/americanpanorama/Census_HOLC_Research/tree/main/2010_Census_Tracts)
+3.    [Diversity Data Kids HOLC grading mapped to the 2010 census](https://data.diversitydatakids.org/dataset/holc_census_tracts-home-owner-loan-corporation--holc--neighborhood-grades-for-us-census-tracts?_ga=2.95776788.927340397.1689780461-135717849.1688844078)
+
+4.    [EJScreen Census Tract level data](https://gaftp.epa.gov/EJScreen/2022/EJSCREEN_2022_StatePct_with_AS_CNMI_GU_VI_Tracts.csv.zip)
+
+5. [Center for Air, Climate and Energy Solutions (CACES) Air Pollution data](https://www.caces.us/data)
+
+6.    [USDA Food Access (2019 Food Atlas)](https://www.ers.usda.gov/data-products/food-access-research-atlas/download-the-data/#Current%20Version)
+7.    [Diversity Data Kids Child Opportunity Index](https://data.diversitydatakids.org/dataset/coi20-child-opportunity-index-2-0-database/resource/080cfe52-90aa-4925-beaa-90efb04ab7fb)
+
+8. [Opportunity Atlas](https://www.opportunityatlas.org/)
+
+9. [Open Park Area from the National Neighborhood Data Archive (NaNDA)](https://www.openicpsr.org/openicpsr/project/117921/version/V1/view)
+
+We have downloaded all the datasets listed in 2-8 in the data folder. If you plan to run this notebook, make sure to first unzip the files in the data directory. The CSV containing a few variables from the ACS is already in the data folder. However, we will also walk through the code to access the ACS data from the Census API. 
+
+# Loading libraries
+Here, I load the libraries I used in my analysis. 
+``` {r LOAD_LIBRARIES}
+library(dplyr)
+library(censusapi)
+library(sf)
+library(tidyr)
+library(readxl)
+```
+
+# American Community Survey (ACS) Data 
+
+First, we need to get a Census API Key and load it into our project. You can get a Census API key [here](https://api.census.gov/data/key_signup.html).
+```{r ACSKey, eval = FALSE}
+Sys.setenv(CENSUS_KEY=PASTEYOURKEYHERE)
+readRenviron("~/.Renviron")
+
+```
+
+
+Now let's get the needed variables from the ACS. The variables that we are getting from the ACS are:
+
+-   total population
+-   median age (in years)
+-   the number of white residents
+-   adult education attainment:
+    -   the number of people with no high school degree
+    -   the number of people with at most a high school degree
+    -   the number of people with at most an associates degree or some college
+    -   the number of people with at most a bachelors degree
+    -   the number of people with a graduate degree
+    
+-   the number of children in early childhood education
+-   the percent of residents that are under five years old
+-   the total number of residents who have no health insurance 
+
+The following code gets these variables for all the census tracts in the US. We will write this data to a CSV.
+
+``` {r DOWNLOAD_ACS_DATA, eval = FALSE}
+library(dplyr)
+library(censusapi)
+
+acs_data <- NULL
+for (f in fips) {
+  stateget <- paste("state:", f, sep="")
+  temp1 <- getCensus(
+      name = "acs/acs5",
+      vintage = 2015, 
+      vars = c("NAME", "B01001_001E", "B01002_001E", "B02001_002E", "B02001_003E", "B06009_002E", "B06009_003E", "B06009_004E", "B06009_005E", "B06009_006E", "B14001_003E"), 
+      region = "tract:*",
+      regionin = stateget,
+)
+
+  temp2 <- getCensus(
+      name = "acs/acs5/subject",
+      vintage = 2015, 
+      vars = c("S0101_C01_002E","S2701_C04_001E"), 
+      region = "tract:*",
+      regionin = stateget,
+)
+temp <- cbind(temp1, temp2)
+# check that temp1 and temp2 have the tracts in order before cbind
+colind <- grep("tract", colnames(temp))
+
+print(sum(temp[,colind[1]] != temp[,colind[2]]))
+
+acs_data <- rbind(acs_data, temp)
+}
+acs_data <- acs_data[, !duplicated(colnames(acs_data))]
+acs_data <- acs_data %>% 
+        rename("B01001_001E - Population" = "B01001_001E",
+               "B01002_001E - Median Age" = "B01002_001E",
+               "B02001_002E - White Population" = "B02001_002E",
+               "B02001_003E - Black Population" = "B02001_003E",
+               "less_than_hs" = "B06009_002E",
+               "high_school" = "B06009_003E",
+               "some_college" = "B06009_004E",
+               "bachelors" = "B06009_005E",
+               "graduate" = "B06009_006E",
+               "num_early_childhood_education" = "B14001_003E",
+               "pct_under_five" = "S0101_C01_002E",
+               "total_uninsured" = "S2701_C04_001E",
+               )
+acs_data$FIPS <- paste(acs_data$state, acs_data$county, acs_data$tract, sep="")
+acs_data$proportion_white <- acs_data$`B02001_002E - White Population` / acs_data$`B01001_001E - Population`
+
+acs_data$proportion_black <- acs_data$`B02001_003E - Black Population`/ acs_data$`B01001_001E - Population`
+acs_data$minority_pct <- 1 - acs_data$percent_white
+
+acs_data$FIPS <- as.character(acs_data$FIPS)
+write.csv(acs_data, "acs_data.csv", row.names=FALSE)
+
+```
+# Merging datasets
+
+Now, we can start merging our datasets. 
+
+### Home Owners' Loan Corporation (HOLC) mortgage grades 
+We will start by merging data containing digitized HOLC grades from the University of Richmond Mapping Inequality Project to the mapping of HOLC Grades to Census Tracts by Diversity Data Kids. These two datasets allow us to map HOLC grades to 2010 census tracts and includes the spatial polygons representing census tracts.
+
+```{r GET_HOLC_DATA}   
+richmond_holc = st_read("data/Richmond_Mapping_Inequality/CensusTracts.geojson")
+ddk_holc <- read.csv("data/DDK_HOLC_Grades/HOLC_2010_census_tracts.csv", header = TRUE)
+
+ddk_geo_col <- as.character(ddk_holc$geoid10)
+richmond_holc$formatGeoID <- as.character(richmond_holc$geoid)
+# In the CSV file, the 0 in front of some FIPS codes get omitted, so we will paste a 0 in front of FIPS codes that are only 10 digits long instead of 11.
+chng <- nchar(ddk_geo_col) == 10
+ddk_geo_col[chng] <- paste("0", ddk_geo_col[chng], sep="")
+
+ddk_holc$formatGeoID <- ddk_geo_col
+
+richmond_ddk<- merge(richmond_holc, ddk_holc, by.x="formatGeoID", by.y="formatGeoID")
+dim(richmond_ddk)
+
+```
+
+### Environmental Protection Agency (EPA) EJ Screen
+
+Now, we will merge data from EJ Screen. EJ Screen contains important environmental indicators such as proximity to polluting sites at the census tract level.
+
+```{r GET_EJSCREEN_DATA]}
+ej_screen <- read.csv("data/EJ_Screen/EJSCREEN_StatePct_with_AS_CNMI_GU_VI_Tracts.csv", header=TRUE)
+
+ej_screen_geo_ids <- as.character(ej_screen$ID)
+
+chng <- nchar(ej_screen_geo_ids) == 10 & ej_screen$ST_ABBREV != "VI"
+ej_screen_geo_ids[chng] <- paste("0", ej_screen_geo_ids[chng], sep="")
+
+ej_screen$formatID <- ej_screen_geo_ids
+
+if_ej_census_tracts <- nchar(ej_screen$formatID) == 11
+ej_tracts <- ej_screen[if_ej_census_tracts, ]
+
+#> dim(ej_tracts)
+#[1] 85395   156
+
+ej_richmond_ddk <- merge(richmond_ddk, ej_tracts, by.x="formatGeoID", by.y="formatID")
+
+dim(ej_richmond_ddk)
+```
+
+### CACES Air Pollution data
+Now, we can merge our other variables from CACES for air pollution data. 
+
+```{r GET_AIRPOLLUTION_DATA}
+caces_air_pollution <- read.csv("data/CACES/CACES_AirPollution.csv")
+caces_fips <- as.character(caces_air_pollution$fips)
+chng <- nchar(caces_fips) == 10
+caces_fips[chng] <- paste("0", caces_fips[chng], sep="")
+caces_air_pollution$formatFips <- caces_fips
+
+caces_wide <- spread(caces_air_pollution, pollutant, pred_wght)
+#> dim(caces_wide)
+#[1] 72043    12
+
+ej_richmond_ddk_caces <- merge(ej_richmond_ddk, caces_wide, by.x="formatGeoID", by.y="formatFips")
+
+dim(ej_richmond_ddk_caces)
+
+#> dim(ej_richmond_ddk_caces)
+#[1] 13430   217
+```
+
+### Food access data
+Next we merge the USDA food atlas data to measure food access. 
+
+``` {r GET_FOODACCESS_DATA}
+
+usda_food_access <- read_excel("data/Food_Atlas/FoodAccessResearchAtlasData2019.xlsx", sheet="Food Access Research Atlas")
+#> dim(usda_food_access)
+#[1] 72531   147
+
+ej_richmond_ddk_caces_usda_food_access <- merge(ej_richmond_ddk_caces, usda_food_access, by.x="formatGeoID", by.y="CensusTract")
+
+dim(ej_richmond_ddk_caces_usda_food_access)
+
+#> dim(ej_richmond_ddk_caces_usda_food_access)
+#[1] 13430   363
+
+```
+### Child Opportunity Index (COI) 2.0 
+Next we merge data on Child Opportunity Index 2.0 from Diversity Data Kids. 
+
+```{r GET_COI2.0_DATA}
+ddk_coi <- read.csv("data/COI/DDK_COI.csv")
+ddk_coi_2010 <- ddk_coi[ddk_coi$year == '2010',]
+coi_geoid <- as.character(ddk_coi_2010$geoid)
+chng <- nchar(coi_geoid) == 10
+coi_geoid[chng] <- paste("0", coi_geoid[chng], sep="")
+ddk_coi_2010$formatGeoID <- coi_geoid
+
+#> dim(ddk_coi_2010)
+#[1] 72195    38
+
+ej_richmond_ddk_caces_usda_food_access_coi <- merge(ej_richmond_ddk_caces_usda_food_access, ddk_coi_2010, by.x="formatGeoID", by.y="formatGeoID")
+
+dim(ej_richmond_ddk_caces_usda_food_access_coi)
+#> dim(ej_richmond_ddk_caces_usda_food_access_coi)
+#[1] 13425   400
+```
+### ACS data
+
+Now, we will merge the ACS data that we collected earlier. This gives us important demographic data to account for in our analysis. 
+
+``` {r GET_ACS_DATA}
+acs_csv <- read.csv("data/ACS/acs_data.csv")
+#> dim(acs_csv)
+#[1] 73056    20
+acs_fips <- as.character(acs_csv$FIPS)
+
+chng <- nchar(acs_fips) == 10 
+acs_fips[chng] <- paste("0", acs_fips[chng], sep="")
+
+acs_csv$FIPS <- acs_fips
+
+ej_richmond_ddk_caces_usda_food_access_coi_acs <- merge(ej_richmond_ddk_caces_usda_food_access_coi, acs_csv, by.x="formatGeoID", by.y="FIPS")
+
+dim(ej_richmond_ddk_caces_usda_food_access_coi_acs)
+
+#> dim(ej_richmond_ddk_caces_usda_food_access_coi_acs)
+#[1] 13425   419
+```
+
+### Opportunity Atlas
+
+Now, we will finally merge data on economic mobility. The opportunity atlas includes a variable that corresponds to predicted income by age 35 for children growing up in each census tract and whose family's income is at the 25th percentile of the national income distribution. In this code below, we standardize this variable by subtracting its mean and dividing by its standard deviation.
+
+``` {r GET_OPPORTUNITYATLAS_DATA}
+opportunity_atlas <- read.csv("data/Opportunity_Atlas/tract_kfr_rP_gP_p25_household_income_by35.csv")
+
+opp_atlas_fips <- as.character(opportunity_atlas$tract)
+
+chng <- nchar(opp_atlas_fips) == 10 
+opp_atlas_fips[chng] <- paste("0", opp_atlas_fips[chng], sep="")
+
+opportunity_atlas$formatFips <- opp_atlas_fips
+
+mean_opportunity <- mean(opportunity_atlas$Household_Income_at_Age_35_rP_gP_p25, na.rm = TRUE)
+
+sd_opp <- sd(opportunity_atlas$Household_Income_at_Age_35_rP_gP_p25, na.rm = TRUE)
+
+opportunity_atlas$z_oi <- (opportunity_atlas$Household_Income_at_Age_35_rP_gP_p25 - mean_opportunity) / sd_opp
+#> dim(opportunity_atlas)
+#[1] 73502     5
+
+ej_richmond_ddk_caces_usda_food_access_coi_acs_opp_atlas <- merge(ej_richmond_ddk_caces_usda_food_access_coi_acs, opportunity_atlas, by.x="formatGeoID", by.y="formatFips")
+
+dim(ej_richmond_ddk_caces_usda_food_access_coi_acs_opp_atlas)
+#> dim(ej_richmond_ddk_caces_usda_food_access_coi_acs_opp_atlas)
+#[1] 13425   423
+```
+
+### Open park area from the National Neighborhood Data Archive (NaNDA)
+
+Finally, we will merge our open park area data. 
+
+``` {r GET_GREENSPACE_DATA}
+greenspace <- read.csv("data/NaNDA_Greenspace/nanda_parks_tract_2018_01P.csv")
+greenspace_fips <- as.character(greenspace$tract_fips10)
+
+chng <- nchar(greenspace_fips) == 10 
+greenspace_fips[chng] <- paste("0", greenspace_fips[chng], sep="")
+
+greenspace$FIPS <- greenspace_fips
+
+
+ej_richmond_ddk_caces_usda_food_access_coi_acs_opp_atlas_greenspace <- merge(ej_richmond_ddk_caces_usda_food_access_coi_acs_opp_atlas, greenspace, by.x="formatGeoID", by.y="FIPS")
+
+dim(ej_richmond_ddk_caces_usda_food_access_coi_acs_opp_atlas_greenspace)
+#> dim(ej_richmond_ddk_caces_usda_food_access_coi_acs_opp_atlas_greenspace)
+#[1] 13425   434
+
+```
+
+### Write final dataset
+We will now write our merged dataset into a geojson file. 
+```{r WRITE_DATASET, EVAL=FALSE}
+final_df <- ej_richmond_ddk_caces_usda_food_access_coi_acs_opp_atlas_greenspace
+dim(final_df)
+#st_write(final_df, "final_df.geojson")
+
+```
+
+# Summary
+The merged data has information on 13425 census tracts and includes 434 variables merged from the nine data sources listed above. The data dictionary corresponding to the variables from each data source can also be found in the data folder.  

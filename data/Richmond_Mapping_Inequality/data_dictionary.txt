@@ -1,0 +1,1 @@
+The data were downloaded from this GitHub repository (https://github.com/americanpanorama/Census_HOLC_Research/tree/main/2010_Census_Tracts). A data dictionary was not available, and our analysis used only the "geometry" field for each census tract.
